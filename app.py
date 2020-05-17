@@ -1,19 +1,3 @@
-import sys
-import numpy as np
-import pandas as pd
-import flask
-import pickle
-import json
-import time
-import datetime
-from scipy import sparse
-from flask import Flask, render_template, request
-from lightfm import LightFM
-from functions.helper_functions import (
-    predict_for_user_explicit_lightfm,
-    ndcg_at_k
-)
-
 """
 ==================================TỔNG QUAN=============================================
 1. Lightfm là gì? https://www.kaggle.com/niyamatalmass/lightfm-hybrid-recommendation-system
@@ -28,46 +12,300 @@ from functions.helper_functions import (
 6. Thực hiện theo hướng dẫn trong file README.md để chạy chương trình.
 """
 
+import sys
+import numpy as np
+import pandas as pd
+import flask
+import pickle
+import json
+import os
+import time
+import datetime
+from scipy import sparse
+from flask import Flask, render_template, request, flash, session
+from lightfm import LightFM
+from lightfm.data import Dataset
+from lightfm.cross_validation import random_train_test_split 
+import pickle
+import mysql.connector
+from functions.lightfm_ext import LightFM_ext
+from scipy.sparse import coo_matrix as sp
+from functions.helper_functions import (
+    predict_for_user_explicit_lightfm,
+    ndcg_at_k
+)
+
+"""===============================================CONFIG DATABASE========================================================"""
+HOST_DATABASE = "localhost"
+USER_DATABASE = "recommender"
+PASSWORD_DATABASE = "password"
+NAME_DATABASE = "book_recommender"
+
+
+"""===============================================DEFINE STRUCT STORE VALUE========================================================"""
+
+class StoreValue(object):
+
+    def __init__(self):
+        self._user_id = []
+        self._book_id = []
+        self._rating = []
+
+    @property
+    def user_id(self):
+        return self._user_id
+
+    @user_id.setter
+    def user_id(self, value):
+        self._user_id = value
+
+    @property
+    def book_id(self):
+        return self._book_id
+    
+    @book_id.setter
+    def book_id(self, value):
+        self._book_id = value
+
+    @property
+    def rating(self):
+        return self.rating
+    
+    @rating.setter
+    def rating(self, value):
+        self.rating = value
+
+
+"""===============================================DATABASE OPERATION========================================================"""
+
+# Get ratings
+def get_ratings():
+    mydb = mysql.connector.connect(
+        host=HOST_DATABASE,
+        user=USER_DATABASE,
+        passwd=PASSWORD_DATABASE,
+        database=NAME_DATABASE
+    )
+    
+    mycursor = mydb.cursor()
+
+    mycursor.execute("SELECT * FROM ratings")
+    return mycursor.fetchall()
+
+# Get books
+def get_books():
+    mydb = mysql.connector.connect(
+        host=HOST_DATABASE,
+        user=USER_DATABASE,
+        passwd=PASSWORD_DATABASE,
+        database=NAME_DATABASE
+    )
+    
+    mycursor = mydb.cursor()
+
+    mycursor.execute("USE book_recommender")
+    mycursor.execute("SELECT * FROM books")
+    return mycursor.fetchall()
+
+# Get users
+def get_users():
+    mydb = mysql.connector.connect(
+        host=HOST_DATABASE,
+        user=USER_DATABASE,
+        passwd=PASSWORD_DATABASE,
+        database=NAME_DATABASE
+    )
+    
+    mycursor = mydb.cursor()
+
+    mycursor.execute("SELECT * FROM users")
+    return mycursor.fetchall()
+
+# Store new ratings
+def store_ratings(user_id_s, book_id_s, rating_s):
+    mydb = mysql.connector.connect(
+        host=HOST_DATABASE,
+        user=USER_DATABASE,
+        passwd=PASSWORD_DATABASE,
+        database=NAME_DATABASE
+    )
+
+    mycursor = mydb.cursor()
+
+    # Check book is rated? if rated --> update rate, else --> insert rate
+    sql = """SELECT * FROM ratings WHERE user_id = %s AND book_id = %s """
+
+    mycursor.execute(sql, (int(user_id_s), int(book_id_s),))
+    result = mycursor.fetchall()
+    if result:
+        sql = """UPDATE ratings SET rating = %s WHERE user_id = %s AND book_id = %s """
+
+        mycursor.execute(sql, (int(rating_s), int(user_id_s), int(book_id_s),))
+    else:
+        mycursor.execute("INSERT INTO ratings VALUES (%s, %s, %s)",  (int(user_id_s), int(book_id_s), int(rating_s)))
+
+    mydb.commit()
+
+    print(mycursor.rowcount, "record inserted.")
+
+# Check login 
+def query_account(user_name):
+    mydb = mysql.connector.connect(
+        host=HOST_DATABASE,
+        user=USER_DATABASE,
+        passwd=PASSWORD_DATABASE,
+        database=NAME_DATABASE
+    )
+
+    mycursor = mydb.cursor(buffered=True)
+
+    sql = """SELECT * FROM users WHERE user_name = %s"""
+
+    mycursor.execute(sql, (user_name, ))
+    return mycursor.fetchall()
+
+
+"""===============================================LOAD PARAMETERS========================================================"""
+# Convert book data to pandas
+def convert_pd(books):
+    books_pd = pd.DataFrame()
+    _book_id = []
+    _authors = []
+    _title = []
+    _average_rating = []
+    _image_url = []
+    _goodreads_book_id = []
+    for i in range(len(books)):
+        _book_id.append(books[i][0])
+        _authors.append(books[i][7])
+        _title.append(books[i][10])
+        _average_rating.append(books[i][12])
+        _image_url.append(books[i][21])
+        _goodreads_book_id.append(books[i][1])
+    books_pd['book_id'] = _book_id
+    books_pd['authors'] = _authors
+    books_pd['title'] = _title
+    books_pd['average_rating'] = _average_rating
+    books_pd['image_url'] = _image_url
+    books_pd['goodreads_book_id'] = _goodreads_book_id
+    return books_pd
+
+# Load and training recommender
+def load_parameter():
+    ratings = get_ratings()
+    books = get_books()
+    users = get_users()
+    books_pd = convert_pd(books)
+
+    id_users_books = StoreValue()
+
+    for x in ratings:
+        id_users_books._user_id.append(x[0])
+        id_users_books._book_id.append(x[1])
+
+    # Được tạo ra theo hướng dẫn tại https://making.lyst.com/lightfm/docs/examples/dataset.html
+    dataset_explicit = Dataset()
+    dataset_explicit.fit(id_users_books._user_id,
+                id_users_books._book_id)
+
+    num_users, num_items = dataset_explicit.interactions_shape()
+    print('Num users: {}, num_items {}.'.format(num_users, num_items))
+
+    dataset_explicit.fit_partial(items=(x[0] for x in books),
+                        item_features=(x[7] for x in books))
+    
+    dataset_explicit.fit_partial(users=(x[0] for x in users))
+
+
+    # create ---> mapping
+    # interactions: dưới dạng COO_maxtrix, các tương tác sẽ là user_id và book_id
+    # Trọng số voting
+    (interactions_explicit, weights_explicit) = dataset_explicit.build_interactions((id_users_books._user_id[i], id_users_books._book_id[i]) for i in range(len(ratings)))
+
+    # Đây là đặc trưng trích xuất từ các items (sách) dựa trên tác giả của cuốn sách được cung cấp
+    item_features = dataset_explicit.build_item_features(((x[0], [x[7]]) for x in books))
+    # user_features = dataset_explicit.build_user_features(((x[0], [x[1]]) for x in users))
+
+    model_explicit_ratings = LightFM_ext(loss='warp')
+
+    (train, test) = random_train_test_split(interactions=interactions_explicit, test_percentage=0.02)
+
+    model_explicit_ratings.fit(train, item_features=item_features, epochs=2, num_threads=4)
+    return model_explicit_ratings, dataset_explicit, interactions_explicit, weights_explicit, item_features, books_pd
+
+
+"""===============================================GLOBAL VALUE========================================================"""
+
+model_explicit_ratings, dataset_explicit, interactions_explicit, weights_explicit, item_features, books_pd = load_parameter()
+
 app=Flask(__name__)
-user_id = 183
+app.config['SESSION_TYPE'] = 'memcached'
+app.config['SECRET_KEY'] = 'super secret key'
+user_id = 0
 
-# Đọc data sách, trong này chứa thông tin của những cuốn sách, file này trong dataset goodbooks-10k
-books = pd.read_csv('model/books.csv')
+user_id_map = dataset_explicit.mapping()[0]
+item_id_map = dataset_explicit.mapping()[2]
 
-# This is an edited/extended/custom LightFM model
-# 10 components 200 epochs
-# Load model lên
-with open('model/model_lfe-10-components-200-epoch.pkl', 'rb') as f:
-    model_explicit_ratings = pickle.load(f)
+book_id_key = []
+user_id_key = []
 
-# Được tạo ra theo hướng dẫn tại https://making.lyst.com/lightfm/docs/examples/dataset.html với số users: 53425 và số items 10000.
-with open('model/explicit_dataset.pkl', 'rb') as f:
-    dataset_explicit = pickle.load(f)
+for k in item_id_map.keys():
+    book_id_key.append(k)
 
-# interactions: dưới dạng COO_maxtrix, các tương tác sẽ là User-ID và ISBN của sách được cung cấp trong BX-Book-Ratings.csv
-with open('model/explicit_interactions.pkl', 'rb') as f:
-    interactions_explicit = pickle.load(f)
+for k in user_id_map.keys():
+    user_id_key.append(k)
 
-# Trọng số sau khi training mô hình
-with open('model/weights.pkl', 'rb') as f:
-    weights_explicit = pickle.load(f)
 
-# This is the full item_features matrix
-# Đây là đặc trưng trích xuất từ các items (sách) dựa trên tác giả của cuốn sách được cung cấp trong BX-Books.csv
-with open('model/item_features.pkl', 'rb') as f:
-    item_features = pickle.load(f)
+"""===============================================FLASK========================================================"""
 
-@app.route('/')
-def explicit_ratings():
-    return render_template('book-recommender-explicit-ratings.html')
+#Login
+@app.route('/', methods=['GET', 'POST'])
+def login():
+    global user_id
 
+    if request.method == 'POST':
+        # Get Form Fields
+        username = request.form['username']
+        password_candidate = request.form['password']
+
+        account = query_account(username)
+
+        if account:
+            user_id_raw = account[0][0]
+            for i, k in enumerate(user_id_key):
+                if (k == user_id_raw):
+                    user_id = i
+                    break
+
+            print("===============> user id raw %s ------ user id %s." % (user_id_raw, user_id))
+                
+            password = account[0][3]
+
+            # Compare Passwords
+            if (password == password_candidate):
+                flash('You are now logged in', 'success')
+                return render_template('book-recommender-explicit-ratings.html')
+            else:
+                error = 'Invalid login'
+                return render_template('login.html', error=error)
+
+            # Close connection
+            mycursor.close()
+        else:
+            error = 'Username not found'
+            return render_template('login.html', error=error)
+
+    return render_template('login.html')
+
+
+# Generate and predict
 @app.route('/explicit-recommendations-ratings', methods = ['GET','POST'])
 def explicit_recs_ratings():
+    # print("==================> user id: ", user_id)
     if request.method == 'GET':
-        # print(interactions_explicit)
         predictions = predict_for_user_explicit_lightfm(model_explicit_ratings, dataset_explicit, interactions_explicit,
-        books, item_features=item_features, model_user_id = user_id, num_recs = 24).to_dict(orient='records')
-
+        books_pd, item_features=item_features, model_user_id = user_id, num_recs = 5).to_dict(orient='records')
+        # print(predictions)
         return render_template('explicit_recommendations_ratings.html', predictions = predictions)
     
     if request.method == 'POST':
@@ -76,7 +314,9 @@ def explicit_recs_ratings():
         print(msg)
         sys.stdout.flush()
         weights_array = json.loads(str(request.json['array']))
+
         interactions_array = np.where(np.array(weights_array)!=0, 1, 0)
+
         print('Loaded arrays')
         sys.stdout.flush()
 
@@ -87,12 +327,21 @@ def explicit_recs_ratings():
         interactions_explicit_arr = interactions_explicit.toarray()
         print('Cast COO matrices as ndarray')
         sys.stdout.flush()
+        pos = np.where(np.array(weights_array) > 0)
+        rating_temp = np.array(weights_array)[pos]
+
+        book_id_raw = np.array(book_id_key)[pos]
+
+        for i in range(len(book_id_raw)):
+            store_ratings(user_id_key[user_id], book_id_raw[i], rating_temp[i])
+
         weights_explicit_arr[user_id] = weights_array
         interactions_explicit_arr[user_id] = interactions_array
         print('Set last rows of ndarrays equal to weights_array/interactions_array')
         sys.stdout.flush()
         weights_explicit_aug = sparse.coo_matrix(weights_explicit_arr)
         interactions_explicit_aug = sparse.coo_matrix(interactions_explicit_arr)
+
         print('Cast ndarrays as COO matrices')
         sys.stdout.flush()
         if msg=='update':
@@ -107,7 +356,7 @@ def explicit_recs_ratings():
         print('Model fitting complete')
         sys.stdout.flush()
         predictions = predict_for_user_explicit_lightfm(model_explicit_ratings, dataset_explicit, interactions_explicit_aug,
-        books, item_features=item_features, model_user_id = user_id, num_recs = 24).to_dict(orient='records')
+        books_pd, item_features=item_features, model_user_id = user_id, num_recs = 24).to_dict(orient='records')
         time_elapsed = time.time() - start_time
         print('Predictions generated')
         print(f'Time to run: {datetime.timedelta(seconds=time_elapsed)}')
@@ -115,6 +364,7 @@ def explicit_recs_ratings():
         item_id_map = dataset_explicit.mapping()[2]
         all_item_ids = sorted(list(item_id_map.values()))
         predicted = model_explicit_ratings.predict(user_id, all_item_ids)
+        print(predicted)
         actual = weights_explicit_arr[user_id]
         nonzero_actual = np.nonzero(actual)
         sort_inds = predicted[nonzero_actual].argsort()[::-1]
@@ -123,6 +373,9 @@ def explicit_recs_ratings():
         print(f'nDCG for current user: {ndcg}')
 
         return render_template('explicit_recommendations_ratings.html', predictions = predictions)
+
+
+"""===============================================MAIN========================================================"""
 
 if __name__ == "__main__":
     app.run()

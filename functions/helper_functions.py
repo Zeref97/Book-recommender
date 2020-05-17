@@ -250,21 +250,36 @@ def predict_for_user_explicit_lightfm(model, dataset, interactions, books, item_
     import pandas as pd
     user_id_map = dataset.mapping()[0]
     item_id_map = dataset.mapping()[2]
+
     user_id_rev_map = {v:k for k, v in user_id_map.items()}
     item_id_rev_map = {v:k for k, v in item_id_map.items()}
 
     all_item_ids = list(item_id_map.values())
+    print(interactions.shape)
 
-    raw_predictions = model.predict(model_user_id, all_item_ids, item_features = item_features)
+    if (model_user_id >= interactions.shape[0]):
+        raw_predictions = np.zeros((10000,))
+        user_predictions = pd.DataFrame({'predictions': raw_predictions, 'model_book_id':all_item_ids})
+        user_recommendations = user_predictions[(user_predictions['predictions']>=0)].sort_values('predictions', ascending = False).iloc[:num_recs,:]
+    else:
+        raw_predictions = model.predict(model_user_id, all_item_ids, item_features = item_features)
 
-    user_predictions = pd.DataFrame({'predictions':raw_predictions, 'model_book_id':all_item_ids})
+        # print(type(raw_predictions))
+        user_predictions = pd.DataFrame({'predictions': raw_predictions, 'model_book_id':all_item_ids})
 
-    user_noninteractions = np.where(interactions.toarray()[model_user_id]==0)[0]
+        user_noninteractions = np.where(interactions.toarray()[model_user_id]==0)[0]
 
-    user_recommendations = user_predictions[user_predictions['model_book_id'].isin(user_noninteractions) &
-    (user_predictions['predictions']>=3)].sort_values('predictions', ascending = False).iloc[:num_recs,:]
+        user_recommendations = user_predictions[user_predictions['model_book_id'].isin(user_noninteractions) &
+        (user_predictions['predictions']>=-100)].sort_values('predictions', ascending = False).iloc[:num_recs,:]
+    
     user_recommendations['book_id'] = user_recommendations['model_book_id'].map(item_id_rev_map)
-
+    
+    user_recommendations['book_id'] = user_recommendations['book_id'].astype(int)
+    # books['book_id'] = books['book_id'].astype(int)
+    # print(user_recommendations['book_id'])
+    # print("================================")
+    # print(books['book_id'])
+    # print(books[['book_id','authors','title','average_rating','image_url','goodreads_book_id']])
     return user_recommendations.merge(books[['book_id','authors','title','average_rating','image_url','goodreads_book_id']])
 
 def predict_for_user_knn_lightfm(lightfm_model, lightfm_dataset, lightfm_weights, books, user_vector, item_features=None, num_recs=5):

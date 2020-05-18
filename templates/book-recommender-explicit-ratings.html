@@ -36,7 +36,21 @@
                   </ul>
                 </div>
         </nav>
+    <div class="container">
+        <form class="form-search"  role="form">
+            <label>Search</label>
+            <input type="text" id="searchbook" name="search" class="form-control" placeholder="title" required autofocus>
+            <div class="row my-4" id="search-div">
+                <div class="col-md-12">
+                    <!-- <input class="btn btn-primary" id="search" type="submit" value="Search Book"> -->
+                    <button class="btn btn-primary btn-block" id="search" type="button" style="height:35px; width:100px">Search</button>
+                </div>
+            </div>
+        </form>   
+    </div>  
+
     <div class="container my-5">
+
         <div id="head" class="pb-2 mt-4 mb-2 border-bottom">
             <h1>Rate-Your-Own Recommender</h1>
         </div>
@@ -45,6 +59,7 @@
                 <input class="btn btn-primary" id="generate" type="submit" value="Generate Recommendations">
             </div>
         </div>
+
         <div id="directions-div" class="row my-4" style="display:none">
             <div class="col-md-12">
                 <p>Rate as many books as you like, and click "Want to Read" or "Skip" on the rest.
@@ -64,7 +79,8 @@
                     and the <a href="https://github.com/zygmuntz/goodbooks-10k">goodbooks-10k book dataset</a> by Zygmunt Zając.</p>
             </div>
         </div>
-    </div> 
+    </div>
+
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/rateYo/2.3.2/jquery.rateyo.min.js"></script>
     <script>
@@ -80,6 +96,20 @@
                             $('#directions-div').show()
                             $('#submit-div').show();
                             $('#generate-div').hide();
+                        }
+                    });
+                });
+                $("#search").click(function() {
+                    var user = $('#searchbook').val();
+                    $.ajax({
+                        url:'/explicit-recommendations-ratings',
+                        type:"POST",
+                        data: $('form').serialize(),
+                        success: function(data){
+                            $('#predictions').html(data);
+                            $('#generate-div').hide();
+                            $('#directions-div').show()
+                            $('#submit-div').show();
                         }
                     });
                 });

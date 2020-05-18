@@ -280,6 +280,7 @@ def predict_for_user_explicit_lightfm(model, dataset, interactions, books, item_
     # print("================================")
     # print(books['book_id'])
     # print(books[['book_id','authors','title','average_rating','image_url','goodreads_book_id']])
+    # print(user_recommendations.merge(books[['book_id','authors','title','average_rating','image_url','goodreads_book_id']]))
     return user_recommendations.merge(books[['book_id','authors','title','average_rating','image_url','goodreads_book_id']])
 
 def predict_for_user_knn_lightfm(lightfm_model, lightfm_dataset, lightfm_weights, books, user_vector, item_features=None, num_recs=5):

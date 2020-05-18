@@ -22,7 +22,7 @@ import os
 import time
 import datetime
 from scipy import sparse
-from flask import Flask, render_template, request, flash, session
+from flask import Flask, render_template, request, flash, session, redirect, url_for
 from lightfm import LightFM
 from lightfm.data import Dataset
 from lightfm.cross_validation import random_train_test_split 
@@ -284,7 +284,7 @@ def login():
             # Compare Passwords
             if (password == password_candidate):
                 flash('You are now logged in', 'success')
-                return render_template('book-recommender-explicit-ratings.html')
+                return redirect(url_for('book_recommender'))
             else:
                 error = 'Invalid login'
                 return render_template('login.html', error=error)
@@ -297,82 +297,102 @@ def login():
 
     return render_template('login.html')
 
+def Convert(lst): 
+    res_dct = {lst[i]: lst[i + 1] for i in range(0, len(lst), 2)} 
+    return res_dct 
+
+@app.route('/book_recommender')
+def book_recommender():
+    return render_template('book-recommender-explicit-ratings.html')
+
 
 # Generate and predict
 @app.route('/explicit-recommendations-ratings', methods = ['GET','POST'])
 def explicit_recs_ratings():
     # print("==================> user id: ", user_id)
     if request.method == 'GET':
+        # print(request.form['search'])
         predictions = predict_for_user_explicit_lightfm(model_explicit_ratings, dataset_explicit, interactions_explicit,
         books_pd, item_features=item_features, model_user_id = user_id, num_recs = 5).to_dict(orient='records')
         # print(predictions)
         return render_template('explicit_recommendations_ratings.html', predictions = predictions)
     
     if request.method == 'POST':
-        start_time = time.time()
-        msg = request.json['msg']
-        print(msg)
-        sys.stdout.flush()
-        weights_array = json.loads(str(request.json['array']))
-
-        interactions_array = np.where(np.array(weights_array)!=0, 1, 0)
-
-        print('Loaded arrays')
-        sys.stdout.flush()
-
-        assert len(weights_array) == weights_explicit.shape[1]
-        assert len(interactions_array) == interactions_explicit.shape[1]
-
-        weights_explicit_arr = weights_explicit.toarray()
-        interactions_explicit_arr = interactions_explicit.toarray()
-        print('Cast COO matrices as ndarray')
-        sys.stdout.flush()
-        pos = np.where(np.array(weights_array) > 0)
-        rating_temp = np.array(weights_array)[pos]
-
-        book_id_raw = np.array(book_id_key)[pos]
-
-        for i in range(len(book_id_raw)):
-            store_ratings(user_id_key[user_id], book_id_raw[i], rating_temp[i])
-
-        weights_explicit_arr[user_id] = weights_array
-        interactions_explicit_arr[user_id] = interactions_array
-        print('Set last rows of ndarrays equal to weights_array/interactions_array')
-        sys.stdout.flush()
-        weights_explicit_aug = sparse.coo_matrix(weights_explicit_arr)
-        interactions_explicit_aug = sparse.coo_matrix(interactions_explicit_arr)
-
-        print('Cast ndarrays as COO matrices')
-        sys.stdout.flush()
-        if msg=='update':
-            print('Now updating last matrix row')
-            sys.stdout.flush()
-            model_explicit_ratings.fit_partial_by_row(user_id, interactions_explicit_aug, sample_weight = weights_explicit_aug, item_features=item_features, epochs=50)
+        # print([i for (i, k) in enumerate(book_id_key) if k == 3 ][0])
+        if request.json == None:
+            books = get_books()
+            predictions = []
+            for b in books:
+                if request.form['search'] in b[10]:
+                    predictions.append(Convert(['predictions', 0.0, 'model_book_id', [i for i, k in enumerate(book_id_key) if k == b[0]][0], 'book_id', b[0], 'authors', b[7], 
+                                        'title', b[10], 'average_rating', b[12], 'image_url', b[21], 'goodreads_book_id', b[1]]))
+            # print(predictions)                         
+            return render_template('explicit_recommendations_ratings.html', predictions = predictions)
         else:
-            print('Now fitting updated matrix to model')
+            start_time = time.time()
+            msg = request.json['msg']
+            print(msg)
             sys.stdout.flush()
-            # This takes between 1.5 to 8 minutes depending on the complexity of the model
-            model_explicit_ratings.fit_partial(interactions_explicit_aug, sample_weight = weights_explicit_aug, item_features=item_features, epochs=5)
-        print('Model fitting complete')
-        sys.stdout.flush()
-        predictions = predict_for_user_explicit_lightfm(model_explicit_ratings, dataset_explicit, interactions_explicit_aug,
-        books_pd, item_features=item_features, model_user_id = user_id, num_recs = 24).to_dict(orient='records')
-        time_elapsed = time.time() - start_time
-        print('Predictions generated')
-        print(f'Time to run: {datetime.timedelta(seconds=time_elapsed)}')
-        sys.stdout.flush()
-        item_id_map = dataset_explicit.mapping()[2]
-        all_item_ids = sorted(list(item_id_map.values()))
-        predicted = model_explicit_ratings.predict(user_id, all_item_ids)
-        print(predicted)
-        actual = weights_explicit_arr[user_id]
-        nonzero_actual = np.nonzero(actual)
-        sort_inds = predicted[nonzero_actual].argsort()[::-1]
-        r = actual[nonzero_actual][sort_inds]
-        ndcg = ndcg_at_k(r, 5)
-        print(f'nDCG for current user: {ndcg}')
+            weights_array = json.loads(str(request.json['array']))
 
-        return render_template('explicit_recommendations_ratings.html', predictions = predictions)
+            interactions_array = np.where(np.array(weights_array)!=0, 1, 0)
+
+            print('Loaded arrays')
+            sys.stdout.flush()
+
+            assert len(weights_array) == weights_explicit.shape[1]
+            assert len(interactions_array) == interactions_explicit.shape[1]
+
+            weights_explicit_arr = weights_explicit.toarray()
+            interactions_explicit_arr = interactions_explicit.toarray()
+            print('Cast COO matrices as ndarray')
+            sys.stdout.flush()
+            pos = np.where(np.array(weights_array) > 0)
+            rating_temp = np.array(weights_array)[pos]
+
+            book_id_raw = np.array(book_id_key)[pos]
+
+            for i in range(len(book_id_raw)):
+                store_ratings(user_id_key[user_id], book_id_raw[i], rating_temp[i])
+
+            weights_explicit_arr[user_id] = weights_array
+            interactions_explicit_arr[user_id] = interactions_array
+            print('Set last rows of ndarrays equal to weights_array/interactions_array')
+            sys.stdout.flush()
+            weights_explicit_aug = sparse.coo_matrix(weights_explicit_arr)
+            interactions_explicit_aug = sparse.coo_matrix(interactions_explicit_arr)
+
+            print('Cast ndarrays as COO matrices')
+            sys.stdout.flush()
+            if msg=='update':
+                print('Now updating last matrix row')
+                sys.stdout.flush()
+                model_explicit_ratings.fit_partial_by_row(user_id, interactions_explicit_aug, sample_weight = weights_explicit_aug, item_features=item_features, epochs=50)
+            else:
+                print('Now fitting updated matrix to model')
+                sys.stdout.flush()
+                # This takes between 1.5 to 8 minutes depending on the complexity of the model
+                model_explicit_ratings.fit_partial(interactions_explicit_aug, sample_weight = weights_explicit_aug, item_features=item_features, epochs=5)
+            print('Model fitting complete')
+            sys.stdout.flush()
+            predictions = predict_for_user_explicit_lightfm(model_explicit_ratings, dataset_explicit, interactions_explicit_aug,
+            books_pd, item_features=item_features, model_user_id = user_id, num_recs = 24).to_dict(orient='records')
+            time_elapsed = time.time() - start_time
+            print('Predictions generated')
+            print(f'Time to run: {datetime.timedelta(seconds=time_elapsed)}')
+            sys.stdout.flush()
+            item_id_map = dataset_explicit.mapping()[2]
+            all_item_ids = sorted(list(item_id_map.values()))
+            predicted = model_explicit_ratings.predict(user_id, all_item_ids)
+            # print(predicted)
+            actual = weights_explicit_arr[user_id]
+            nonzero_actual = np.nonzero(actual)
+            sort_inds = predicted[nonzero_actual].argsort()[::-1]
+            r = actual[nonzero_actual][sort_inds]
+            ndcg = ndcg_at_k(r, 5)
+            print(f'nDCG for current user: {ndcg}')
+
+            return render_template('explicit_recommendations_ratings.html', predictions = predictions)
 
 
 """===============================================MAIN========================================================"""

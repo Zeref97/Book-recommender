@@ -242,6 +242,7 @@ app=Flask(__name__)
 app.config['SESSION_TYPE'] = 'memcached'
 app.config['SECRET_KEY'] = 'super secret key'
 user_id = 0
+name = ""
 
 user_id_map = dataset_explicit.mapping()[0]
 item_id_map = dataset_explicit.mapping()[2]
@@ -261,7 +262,7 @@ for k in user_id_map.keys():
 #Login
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    global user_id
+    global user_id, name
 
     if request.method == 'POST':
         # Get Form Fields
@@ -280,6 +281,7 @@ def login():
             print("===============> user id raw %s ------ user id %s." % (user_id_raw, user_id))
                 
             password = account[0][3]
+            name = account[0][2]
 
             # Compare Passwords
             if (password == password_candidate):
@@ -303,7 +305,20 @@ def Convert(lst):
 
 @app.route('/book_recommender')
 def book_recommender():
-    return render_template('book-recommender-explicit-ratings.html')
+    return render_template('book-recommender-explicit-ratings.html', name=name)
+
+
+# show new books
+@app.route('/book_recommender/new_books', methods = ['GET','POST'])
+def new_books():
+    if request.method == 'GET':
+        books = get_books()
+        predictions = []
+        for b in books[0:10]:
+            predictions.append(Convert(['predictions', 0.0, 'model_book_id', [i for i, k in enumerate(book_id_key) if k == b[0]][0], 'book_id', b[0], 'authors', b[7], 
+                                'title', b[10], 'average_rating', b[12], 'image_url', b[21], 'goodreads_book_id', b[1]]))
+                  
+        return render_template('explicit_recommendations_ratings.html', predictions = predictions)
 
 
 # Generate and predict
@@ -312,6 +327,8 @@ def explicit_recs_ratings():
     # print("==================> user id: ", user_id)
     if request.method == 'GET':
         # print(request.form['search'])
+        # model_explicit_ratings: train
+        # dataset_explicit: books
         predictions = predict_for_user_explicit_lightfm(model_explicit_ratings, dataset_explicit, interactions_explicit,
         books_pd, item_features=item_features, model_user_id = user_id, num_recs = 5).to_dict(orient='records')
         # print(predictions)

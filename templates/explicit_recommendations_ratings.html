@@ -109,7 +109,8 @@
         {% endif %}
             <div class="col-md-2">
                 <div class="card" id="img-{{prediction['model_book_id']}}">
-                    <a href="https://www.goodreads.com/book/show/{{prediction['goodreads_book_id']}}" target="_blank">
+                    <!-- <a href="https://www.goodreads.com/book/show/{{prediction['goodreads_book_id']}}" target="_blank"> -->
+                    <a>
                         <img src="{{prediction['image_url']}}" class="card-img-top" alt="{{prediction['title']}}">
                     </a>
                     <div class="card-body">

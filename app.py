@@ -242,6 +242,7 @@ app=Flask(__name__)
 app.config['SESSION_TYPE'] = 'memcached'
 app.config['SECRET_KEY'] = 'super secret key'
 user_id = 0
+user_name = ""
 name = ""
 
 user_id_map = dataset_explicit.mapping()[0]
@@ -262,7 +263,7 @@ for k in user_id_map.keys():
 #Login
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    global user_id, name
+    global user_id, user_name, name
 
     if request.method == 'POST':
         # Get Form Fields
@@ -281,7 +282,8 @@ def login():
             print("===============> user id raw %s ------ user id %s." % (user_id_raw, user_id))
                 
             password = account[0][3]
-            name = account[0][2]
+            user_name = account[0][2]
+            name = account[0][1]
 
             # Compare Passwords
             if (password == password_candidate):
@@ -314,7 +316,7 @@ def new_books():
     if request.method == 'GET':
         books = get_books()
         predictions = []
-        for b in books[0:10]:
+        for b in books[-10:]:
             predictions.append(Convert(['predictions', 0.0, 'model_book_id', [i for i, k in enumerate(book_id_key) if k == b[0]][0], 'book_id', b[0], 'authors', b[7], 
                                 'title', b[10], 'average_rating', b[12], 'image_url', b[21], 'goodreads_book_id', b[1]]))
                   
@@ -340,7 +342,7 @@ def explicit_recs_ratings():
             books = get_books()
             predictions = []
             for b in books:
-                if request.form['search'] in b[10]:
+                if request.form['search'] in b[10].lower():
                     predictions.append(Convert(['predictions', 0.0, 'model_book_id', [i for i, k in enumerate(book_id_key) if k == b[0]][0], 'book_id', b[0], 'authors', b[7], 
                                         'title', b[10], 'average_rating', b[12], 'image_url', b[21], 'goodreads_book_id', b[1]]))
             # print(predictions)                         

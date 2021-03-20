@@ -6,7 +6,7 @@ Flask==1.1.1
 gunicorn==19.9.0
 idna==2.8
 itsdangerous==1.1.0
-Jinja2==2.10.1
+Jinja2==2.11.3
 joblib==0.13.2
 lightfm==1.15
 MarkupSafe==1.1.1
